@@ -32,6 +32,14 @@ import { PPSProject, Task, ProjectStatus, TaskStatus, UrgencyLevel, Pivot, Email
 import { MOCK_PROJECTS, MOCK_PIVOTS } from './mockData';
 import { supabase, hasSupabaseConfig } from './lib/supabase';
 
+// --- Constants ---
+const ADMIN_CREDENTIALS = {
+  username: 'admin',
+  password: 'pps2024'
+};
+
+type UserRole = 'admin' | 'guest';
+
 // --- Utility Functions ---
 
 const getStatusColor = (status: ProjectStatus) => {
@@ -329,6 +337,10 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [userRole, setUserRole] = useState<UserRole | null>(() => {
+    return localStorage.getItem('pps_user_role') as UserRole | null;
+  });
+  const [loginError, setLoginError] = useState('');
   const [debugLog, setDebugLog] = useState<string[]>([]);
 
   const addLog = (msg: string) => {
@@ -499,6 +511,7 @@ export default function App() {
   };
 
   const deleteProject = async (id: string) => {
+    if (userRole !== 'admin') return;
     if (confirm('Tem a certeza que deseja eliminar este projecto?')) {
       if (hasSupabaseConfig) {
         addLog(`Eliminando projeto ${id}...`);
@@ -511,6 +524,30 @@ export default function App() {
     }
   };
 
+  const handleLogin = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    const u = formData.get('username') as string;
+    const p = formData.get('password') as string;
+
+    if (u === ADMIN_CREDENTIALS.username && p === ADMIN_CREDENTIALS.password) {
+      setUserRole('admin');
+      localStorage.setItem('pps_user_role', 'admin');
+    } else {
+      setLoginError('Credenciais inválidas');
+    }
+  };
+
+  const enterAsGuest = () => {
+    setUserRole('guest');
+    localStorage.setItem('pps_user_role', 'guest');
+  };
+
+  const logout = () => {
+    setUserRole(null);
+    localStorage.removeItem('pps_user_role');
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -518,6 +555,77 @@ export default function App() {
           <div className="w-12 h-12 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin" />
           <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">A ligar ao servidor...</p>
         </div>
+      </div>
+    );
+  }
+
+  if (!userRole) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-6 selection:bg-emerald-100">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-slate-200 overflow-hidden"
+        >
+          <div className="bg-emerald-600 p-8 text-center">
+            <div className="bg-white/20 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur-sm">
+              <LayoutDashboard className="w-8 h-8 text-white" />
+            </div>
+            <h1 className="text-2xl font-bold text-white tracking-tight">PPS Control</h1>
+            <p className="text-emerald-100 text-xs font-bold uppercase tracking-widest mt-1">Gestão de Projectos</p>
+          </div>
+          
+          <div className="p-8 space-y-8">
+            <form onSubmit={handleLogin} className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Main User</label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input 
+                    name="username"
+                    type="text" 
+                    required
+                    placeholder="Utilizador"
+                    className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-sm"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Password</label>
+                <div className="relative">
+                  <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input 
+                    name="password"
+                    type="password" 
+                    required
+                    placeholder="••••••••"
+                    className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-sm"
+                  />
+                </div>
+              </div>
+              {loginError && <p className="text-xs text-rose-500 font-bold bg-rose-50 p-2 rounded-lg border border-rose-100">{loginError}</p>}
+              <button 
+                type="submit"
+                className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold transition-all shadow-lg shadow-emerald-200 active:scale-[0.98]"
+              >
+                Entrar como Administrador
+              </button>
+            </form>
+
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-100"></div></div>
+              <div className="relative flex justify-center text-[10px]"><span className="px-2 bg-white text-slate-400 font-black uppercase">Ou</span></div>
+            </div>
+
+            <button 
+              onClick={enterAsGuest}
+              className="w-full py-4 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-xl font-bold transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+            >
+              <Users className="w-4 h-4" />
+              Entrar como Convidado
+            </button>
+          </div>
+        </motion.div>
       </div>
     );
   }
@@ -541,21 +649,29 @@ export default function App() {
                 {supabaseConnected ? 'Supabase Ligado' : 'Modo Local'}
               </span>
             </div>
-            <button 
-              onClick={() => setIsSettingsOpen(true)}
-              className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-slate-50 rounded-lg transition-colors border border-slate-100"
-              title="Definições"
+            {userRole === 'admin' && (
+              <>
+                <button 
+                  onClick={() => setIsSettingsOpen(true)}
+                  className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-slate-50 rounded-lg transition-colors border border-slate-100"
+                  title="Definições"
+                >
+                  <Settings className="w-5 h-5" />
+                </button>
+                <button 
+                  onClick={() => setIsAddingProject(true)}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-semibold flex items-center gap-2 transition-all shadow-lg shadow-emerald-200 active:scale-95"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Novo PPS</span>
+                </button>
+              </>
+            )}
+            <div 
+              onClick={() => { if(confirm('Sair da sessão?')) logout(); }}
+              className="w-10 h-10 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-600 cursor-pointer hover:bg-rose-50 hover:border-rose-100 hover:text-rose-600 transition-all"
+              title={`Sessão: ${userRole === 'admin' ? 'Administrador' : 'Convidado'} (Clique para Sair)`}
             >
-              <Settings className="w-5 h-5" />
-            </button>
-            <button 
-              onClick={() => setIsAddingProject(true)}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-semibold flex items-center gap-2 transition-all shadow-lg shadow-emerald-200 active:scale-95"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Novo PPS</span>
-            </button>
-            <div className="w-10 h-10 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-600">
               <User className="w-5 h-5" />
             </div>
           </div>
@@ -701,42 +817,46 @@ export default function App() {
                   Voltar ao Dashboard
                 </button>
                 <div className="flex gap-2">
-                  <button 
-                    onClick={() => {
-                      if (!selectedProject) return;
-                      const pendingTasks = selectedProject.tasks.filter(t => t.status !== 'concluido');
-                      if (pendingTasks.length === 0) {
-                        alert('Não existem tarefas pendentes para pedir feedback.');
-                        return;
-                      }
+                  {userRole === 'admin' && (
+                    <>
+                      <button 
+                        onClick={() => {
+                          if (!selectedProject) return;
+                          const pendingTasks = selectedProject.tasks.filter(t => t.status !== 'concluido');
+                          if (pendingTasks.length === 0) {
+                            alert('Não existem tarefas pendentes para pedir feedback.');
+                            return;
+                          }
 
-                      const pivotsWithPending = pivots.filter(p => pendingTasks.some(t => t.responsible === p.id));
-                      const emails = pivotsWithPending.map(p => p.email).join(',');
-                      
-                      const taskSummary = pendingTasks.map(t => {
-                        const pivot = pivots.find(p => p.id === t.responsible);
-                        return `- ${t.description} (Pivot: ${pivot?.name || 'N/A'}) [Prazo: ${formatDate(t.deadline)}]`;
-                      }).join('\n');
+                          const pivotsWithPending = pivots.filter(p => pendingTasks.some(t => t.responsible === p.id));
+                          const emails = pivotsWithPending.map(p => p.email).join(',');
+                          
+                          const taskSummary = pendingTasks.map(t => {
+                            const pivot = pivots.find(p => p.id === t.responsible);
+                            return `- ${t.description} (Pivot: ${pivot?.name || 'N/A'}) [Prazo: ${formatDate(t.deadline)}]`;
+                          }).join('\n');
 
-                      const currentSubject = emailTemplate.subject.replace('{projectName}', selectedProject.name);
-                      const currentBodyBefore = emailTemplate.bodyBefore.replace('{projectName}', selectedProject.name);
-                      const currentBodyAfter = emailTemplate.bodyAfter.replace('{projectName}', selectedProject.name);
+                          const currentSubject = emailTemplate.subject.replace('{projectName}', selectedProject.name);
+                          const currentBodyBefore = emailTemplate.bodyBefore.replace('{projectName}', selectedProject.name);
+                          const currentBodyAfter = emailTemplate.bodyAfter.replace('{projectName}', selectedProject.name);
 
-                      const subject = encodeURIComponent(currentSubject);
-                      const body = encodeURIComponent(`${currentBodyBefore}\n\n${taskSummary}\n\n${currentBodyAfter}`);
-                      window.location.href = `mailto:${emails}?subject=${subject}&body=${body}`;
-                    }}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 rounded-lg font-bold text-xs hover:bg-blue-100 transition-colors"
-                  >
-                    <Mail className="w-4 h-4" />
-                    Relembrar PIVOTs (Email)
-                  </button>
-                  <button 
-                    onClick={() => deleteProject(selectedId!)}
-                    className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                  >
-                    <Trash2 className="w-5 h-5" />
-                  </button>
+                          const subject = encodeURIComponent(currentSubject);
+                          const body = encodeURIComponent(`${currentBodyBefore}\n\n${taskSummary}\n\n${currentBodyAfter}`);
+                          window.location.href = `mailto:${emails}?subject=${subject}&body=${body}`;
+                        }}
+                        className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 rounded-lg font-bold text-xs hover:bg-blue-100 transition-colors"
+                      >
+                        <Mail className="w-4 h-4" />
+                        Relembrar PIVOTs (Email)
+                      </button>
+                      <button 
+                        onClick={() => deleteProject(selectedId!)}
+                        className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -845,48 +965,58 @@ export default function App() {
 
                   {/* Sidebar - Add Task */}
                   <div className="space-y-6">
-                    <div className="bg-emerald-900 text-white p-8 rounded-3xl shadow-xl shadow-emerald-200/50 sticky top-28">
-                      <h3 className="text-xl font-black mb-6 uppercase tracking-tight">Nova Acção</h3>
-                      <form onSubmit={handleAddTask} className="space-y-4">
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] font-black uppercase tracking-widest opacity-60">Descrição da Tarefa</label>
-                          <textarea 
-                            name="description" 
-                            required 
-                            className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 placeholder:text-white/30 min-h-[100px]"
-                            placeholder="Ex: Definir novo Standard..."
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] font-black uppercase tracking-widest opacity-60">Responsável (Pivot)</label>
-                          <select 
-                            name="responsible" 
-                            required 
-                            className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 [color-scheme:dark] text-white"
+                    {userRole === 'admin' ? (
+                      <div className="bg-emerald-900 text-white p-8 rounded-3xl shadow-xl shadow-emerald-200/50 sticky top-28">
+                        <h3 className="text-xl font-black mb-6 uppercase tracking-tight">Nova Acção</h3>
+                        <form onSubmit={handleAddTask} className="space-y-4">
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-black uppercase tracking-widest opacity-60">Descrição da Tarefa</label>
+                            <textarea 
+                              name="description" 
+                              required 
+                              className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 placeholder:text-white/30 min-h-[100px]"
+                              placeholder="Ex: Definir novo Standard..."
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-black uppercase tracking-widest opacity-60">Responsável (Pivot)</label>
+                            <select 
+                              name="responsible" 
+                              required 
+                              className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 [color-scheme:dark] text-white"
+                            >
+                              <option value="" className="text-slate-900">Seleccionar Pivot...</option>
+                              {pivots.map(p => (
+                                <option key={p.id} value={p.id} className="text-slate-900">{p.name} ({p.department})</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-black uppercase tracking-widest opacity-60">Prazo</label>
+                            <input 
+                              name="deadline" 
+                              type="date" 
+                              required 
+                              className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 [color-scheme:dark]"
+                            />
+                          </div>
+                          <button 
+                            type="submit" 
+                            className="w-full bg-white text-emerald-900 font-bold py-4 rounded-xl hover:bg-emerald-50 transition-colors uppercase tracking-widest mt-4 shadow-lg active:scale-[0.98]"
                           >
-                            <option value="" className="text-slate-900">Seleccionar Pivot...</option>
-                            {pivots.map(p => (
-                              <option key={p.id} value={p.id} className="text-slate-900">{p.name} ({p.department})</option>
-                            ))}
-                          </select>
+                            Adicionar Acção
+                          </button>
+                        </form>
+                      </div>
+                    ) : (
+                      <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm sticky top-28 border-dashed flex flex-col items-center text-center">
+                        <div className="bg-slate-50 w-12 h-12 rounded-full flex items-center justify-center mb-4">
+                          <Users className="w-6 h-6 text-slate-300" />
                         </div>
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] font-black uppercase tracking-widest opacity-60">Prazo</label>
-                          <input 
-                            name="deadline" 
-                            type="date" 
-                            required 
-                            className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 [color-scheme:dark]"
-                          />
-                        </div>
-                        <button 
-                          type="submit" 
-                          className="w-full bg-white text-emerald-900 font-bold py-4 rounded-xl hover:bg-emerald-50 transition-colors uppercase tracking-widest mt-4 shadow-lg active:scale-[0.98]"
-                        >
-                          Adicionar Acção
-                        </button>
-                      </form>
-                    </div>
+                        <h3 className="text-sm font-black uppercase tracking-widest text-slate-400 mb-2">Modo Convidado</h3>
+                        <p className="text-[11px] text-slate-400 leading-relaxed font-medium">Apenas Administradores podem adicionar novas acções ao projecto.</p>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1083,42 +1213,46 @@ export default function App() {
 
                     <div className="bg-slate-50 rounded-2xl p-6 border border-slate-100">
                       <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Adicionar Novo Pivot</h4>
-                      <form 
-                        onSubmit={async (e) => {
-                          e.preventDefault();
-                          const formData = new FormData(e.currentTarget);
-                          const newPivot: Pivot = {
-                            id: hasSupabaseConfig ? undefined : `piv-${Date.now()}`,
-                            name: formData.get('name') as string,
-                            email: formData.get('email') as string,
-                            department: formData.get('department') as string,
-                          } as any;
+                      {userRole === 'admin' ? (
+                        <form 
+                          onSubmit={async (e) => {
+                            e.preventDefault();
+                            const formData = new FormData(e.currentTarget);
+                            const newPivot: Pivot = {
+                              id: hasSupabaseConfig ? undefined : `piv-${Date.now()}`,
+                              name: formData.get('name') as string,
+                              email: formData.get('email') as string,
+                              department: formData.get('department') as string,
+                            } as any;
 
-                          if (hasSupabaseConfig) {
-                            const { data, error } = await supabase.from('pivots').insert({
-                              name: newPivot.name,
-                              email: newPivot.email,
-                              department: newPivot.department
-                            }).select().single();
-                            if (data) {
-                              newPivot.id = data.id;
+                            if (hasSupabaseConfig) {
+                              const { data, error } = await supabase.from('pivots').insert({
+                                name: newPivot.name,
+                                email: newPivot.email,
+                                department: newPivot.department
+                              }).select().single();
+                              if (data) {
+                                newPivot.id = data.id;
+                                setPivots([...pivots, newPivot]);
+                              }
+                            } else {
+                              (newPivot as any).id = `piv-${Date.now()}`;
                               setPivots([...pivots, newPivot]);
                             }
-                          } else {
-                            (newPivot as any).id = `piv-${Date.now()}`;
-                            setPivots([...pivots, newPivot]);
-                          }
-                          e.currentTarget.reset();
-                        }}
-                        className="grid grid-cols-1 gap-3"
-                      >
-                        <input name="name" required placeholder="Nome Completo" className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
-                        <input name="email" type="email" required placeholder="Email" className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
-                        <input name="department" required placeholder="Área / Departamento" className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
-                        <button type="submit" className="bg-emerald-600 text-white font-bold py-2 rounded-xl hover:bg-emerald-700 transition-colors uppercase tracking-widest text-xs mt-2">
-                          Guardar Pivot
-                        </button>
-                      </form>
+                            e.currentTarget.reset();
+                          }}
+                          className="grid grid-cols-1 gap-3"
+                        >
+                          <input name="name" required placeholder="Nome Completo" className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                          <input name="email" type="email" required placeholder="Email" className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                          <input name="department" required placeholder="Área / Departamento" className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                          <button type="submit" className="bg-emerald-600 text-white font-bold py-2 rounded-xl hover:bg-emerald-700 transition-colors uppercase tracking-widest text-xs mt-2">
+                            Guardar Pivot
+                          </button>
+                        </form>
+                      ) : (
+                        <p className="text-[10px] text-slate-400 italic">Gestão restrita a Administradores.</p>
+                      )}
                     </div>
 
                     <div className="space-y-2">
@@ -1130,17 +1264,19 @@ export default function App() {
                               <p className="text-sm font-bold text-slate-800 uppercase tracking-tight">{pivot.name}</p>
                               <p className="text-[10px] text-slate-400 font-medium">{pivot.email} &bull; {pivot.department}</p>
                             </div>
-                            <button 
-                              onClick={async () => {
-                                if (hasSupabaseConfig) {
-                                  await supabase.from('pivots').delete().eq('id', pivot.id);
-                                }
-                                setPivots(pivots.filter(p => p.id !== pivot.id));
-                              }}
-                              className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                            {userRole === 'admin' && (
+                              <button 
+                                onClick={async () => {
+                                  if (hasSupabaseConfig) {
+                                    await supabase.from('pivots').delete().eq('id', pivot.id);
+                                  }
+                                  setPivots(pivots.filter(p => p.id !== pivot.id));
+                                }}
+                                className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -1159,17 +1295,19 @@ export default function App() {
                         <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Assunto do Email</label>
                         <input 
                           value={emailTemplate.subject}
+                          disabled={userRole !== 'admin'}
                           onChange={(e) => setEmailTemplate({ ...emailTemplate, subject: e.target.value })}
-                          className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                          className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:bg-slate-50 disabled:text-slate-400"
                         />
                       </div>
                       <div className="space-y-1.5">
                         <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Mensagem (Início)</label>
                         <textarea 
                           value={emailTemplate.bodyBefore}
+                          disabled={userRole !== 'admin'}
                           onChange={(e) => setEmailTemplate({ ...emailTemplate, bodyBefore: e.target.value })}
                           rows={4}
-                          className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none font-sans"
+                          className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none font-sans disabled:bg-slate-50 disabled:text-slate-400"
                         />
                       </div>
                       <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 border-dashed">
@@ -1183,9 +1321,10 @@ export default function App() {
                         <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Mensagem (Fim)</label>
                         <textarea 
                           value={emailTemplate.bodyAfter}
+                          disabled={userRole !== 'admin'}
                           onChange={(e) => setEmailTemplate({ ...emailTemplate, bodyAfter: e.target.value })}
                           rows={3}
-                          className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none font-sans"
+                          className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none font-sans disabled:bg-slate-50 disabled:text-slate-400"
                         />
                       </div>
                       <div className="p-4 bg-blue-50 rounded-xl flex gap-3 items-start">
