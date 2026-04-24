@@ -41,5 +41,6 @@ export interface PPSProject {
   plannedEnd: string;   // ISO format
   actualStart?: string; // ISO format
   actualEnd?: string;   // ISO format
+  imageUrl?: string;
   tasks: Task[];
 }

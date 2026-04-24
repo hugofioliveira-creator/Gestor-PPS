@@ -12,9 +12,13 @@ CREATE TABLE IF NOT EXISTS public.projects (
     planned_end DATE,
     actual_start DATE,
     actual_end DATE,
+    image_url TEXT,
     progress INTEGER DEFAULT 0,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- 2.1 Garantir coluna image_url se a tabela já existir
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS image_url TEXT;
 
 -- 3. Tabela de Tarefas
 CREATE TABLE IF NOT EXISTS public.tasks (

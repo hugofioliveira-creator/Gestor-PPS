@@ -25,7 +25,8 @@ import {
   Users,
   Check,
   X,
-  Database
+  Database,
+  Lock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PPSProject, Task, ProjectStatus, TaskStatus, UrgencyLevel, Pivot, EmailTemplate } from './types';
@@ -35,7 +36,7 @@ import { supabase, hasSupabaseConfig } from './lib/supabase';
 // --- Constants ---
 const ADMIN_CREDENTIALS = {
   username: 'admin',
-  password: 'pps2024'
+  password: localStorage.getItem('pps_admin_password') || 'pps2024'
 };
 
 type UserRole = 'admin' | 'guest';
@@ -234,21 +235,41 @@ const GanttChart = ({ projects, onSelect }: { projects: PPSProject[], onSelect: 
             {projects.map((project) => {
               const { left, width } = getPositionStyles(project.plannedStart, project.plannedEnd);
               const status = calculateStatus(project);
+              const isOverdue = now > new Date(project.plannedEnd) && project.progress < 100;
+              
+              // Calculate delay width if overdue
+              let delayWidth = 0;
+              if (isOverdue) {
+                const end = new Date(project.plannedEnd);
+                delayWidth = ((now.getTime() - end.getTime()) / (1000 * 60 * 60 * 24) / totalDays) * 100;
+              }
+
               return (
                 <div key={project.id} className="relative h-14 group">
+                  {/* Delay Indicator Bar */}
+                  {isOverdue && (
+                    <div 
+                      className="absolute h-1 top-1/2 -translate-y-1/2 bg-rose-500/30 border-t border-b border-rose-300 opacity-50 z-0"
+                      style={{ left: `calc(${left} + ${width})`, width: `${delayWidth}%` }}
+                    />
+                  )}
+                  
                   <motion.div
                     whileHover={{ scale: 1.01, zIndex: 20 }}
                     onClick={() => onSelect(project.id)}
-                    className="absolute cursor-pointer rounded-lg bg-slate-50 border border-slate-100 shadow-sm p-2 flex flex-col justify-between overflow-hidden"
+                    className={`absolute cursor-pointer rounded-lg bg-white border shadow-sm p-2 flex flex-col justify-between overflow-hidden z-10 ${isOverdue ? 'border-rose-400 shadow-rose-100' : 'border-slate-100'}`}
                     style={{ left, width: `calc(${width} + 2px)`, minWidth: '120px' }}
                   >
                     <div className="flex justify-between items-start gap-1">
                       <span className="text-[10px] font-bold text-slate-800 truncate uppercase leading-tight">{project.name}</span>
-                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${getStatusColor(status)}`} />
+                      <div className="flex gap-1 items-center">
+                        {isOverdue && <Clock className="w-2.5 h-2.5 text-rose-500 animate-pulse" />}
+                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${getStatusColor(status)}`} />
+                      </div>
                     </div>
                     <div className="flex items-center justify-between mt-0.5">
                       <span className="text-[9px] text-slate-500 font-bold truncate uppercase">{project.owner}</span>
-                      <span className="text-[9px] text-slate-600 font-black">{project.progress}%</span>
+                      <span className={`text-[9px] font-black ${isOverdue ? 'text-rose-600' : 'text-slate-600'}`}>{project.progress}%</span>
                     </div>
                     <ProgressBar progress={project.progress} status={status} />
                   </motion.div>
@@ -298,6 +319,7 @@ export default function App() {
             plannedEnd: p.planned_end,
             actualStart: p.actual_start,
             actualEnd: p.actual_end,
+            imageUrl: p.image_url,
             tasks: (taskData || [])
               .filter(t => t.project_id === p.id)
               .map(t => ({
@@ -336,6 +358,7 @@ export default function App() {
   const [view, setView] = useState<'dashboard' | 'detail'>('dashboard');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isAddingProject, setIsAddingProject] = useState(false);
+  const [isEditingDates, setIsEditingDates] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [userRole, setUserRole] = useState<UserRole | null>(() => {
     return localStorage.getItem('pps_user_role') as UserRole | null;
@@ -522,6 +545,68 @@ export default function App() {
       setView('dashboard');
       setSelectedId(null);
     }
+  };
+
+  const handleUpdateDates = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!selectedId || userRole !== 'admin') return;
+
+    const formData = new FormData(e.currentTarget);
+    const start = formData.get('start') as string;
+    const end = formData.get('end') as string;
+
+    if (hasSupabaseConfig) {
+      addLog("Atualizando datas no Supabase...");
+      const { error } = await supabase.from('projects').update({
+        planned_start: start,
+        planned_end: end
+      }).eq('id', selectedId);
+      if (error) {
+        addLog(`Erro ao atualizar datas: ${error.message}`);
+        alert("Erro no Supabase ao salvar datas.");
+        return;
+      }
+    }
+
+    setProjects(projects.map(p => {
+      if (p.id === selectedId) {
+        const updated = { ...p, plannedStart: start, plannedEnd: end };
+        updated.status = calculateStatus(updated);
+        return updated;
+      }
+      return p;
+    }));
+    setIsEditingDates(false);
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedId) return;
+
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64String = reader.result as string;
+      
+      if (hasSupabaseConfig) {
+        addLog("Enviando foto ao Supabase...");
+        const { error } = await supabase.from('projects').update({
+          image_url: base64String
+        }).eq('id', selectedId);
+
+        if (error) {
+          addLog(`Erro ao salvar foto: ${error.message}`);
+          alert("Erro ao salvar foto no banco de dados.");
+          return;
+        }
+      }
+
+      setProjects(projects.map(p => {
+        if (p.id === selectedId) return { ...p, imageUrl: base64String };
+        return p;
+      }));
+      addLog("Foto do PPS anexada com sucesso!");
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleLogin = (e: React.FormEvent<HTMLFormElement>) => {
@@ -878,7 +963,7 @@ export default function App() {
                         <p className="text-slate-600 leading-relaxed">{selectedProject.description}</p>
                       </div>
 
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-6 pt-4 border-t border-slate-100">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-6 pt-4 border-t border-slate-100 p-2">
                         <div>
                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 leading-none">Responsável</p>
                           <p className="text-sm font-bold text-slate-800">{selectedProject.owner}</p>
@@ -887,14 +972,52 @@ export default function App() {
                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 leading-none">Progresso</p>
                           <p className="text-sm font-bold text-slate-800">{selectedProject.progress}%</p>
                         </div>
-                        <div>
+                        <div className={`relative ${userRole === 'admin' ? 'cursor-pointer hover:bg-slate-50 rounded p-1 transition-colors' : ''}`} onClick={() => userRole === 'admin' && setIsEditingDates(true)}>
                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 leading-none">Início Planeado</p>
-                          <p className="text-sm font-bold text-slate-800">{formatDate(selectedProject.plannedStart)}</p>
+                          <p className="text-sm font-bold text-slate-800 flex items-center gap-1">
+                            {formatDate(selectedProject.plannedStart)}
+                            {userRole === 'admin' && <Edit2 className="w-3 h-3 text-emerald-600 opacity-40" />}
+                          </p>
                         </div>
-                        <div>
+                        <div className={`relative ${userRole === 'admin' ? 'cursor-pointer hover:bg-slate-50 rounded p-1 transition-colors' : ''}`} onClick={() => userRole === 'admin' && setIsEditingDates(true)}>
                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 leading-none">Fim Planeado</p>
-                          <p className="text-sm font-bold text-slate-800">{formatDate(selectedProject.plannedEnd)}</p>
+                          <p className={`text-sm font-bold flex items-center gap-1 ${new Date() > new Date(selectedProject.plannedEnd) && selectedProject.progress < 100 ? 'text-rose-600' : 'text-slate-800'}`}>
+                            {formatDate(selectedProject.plannedEnd)}
+                            {userRole === 'admin' && <Edit2 className="w-3 h-3 text-emerald-600 opacity-40" />}
+                          </p>
                         </div>
+                      </div>
+
+                      {/* Project Image Attachment Section */}
+                      <div className="pt-6 border-t border-slate-100">
+                        <div className="flex items-center justify-between mb-4">
+                           <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Estado Atual (Foto PPS Físico)</h4>
+                           {userRole === 'admin' && (
+                             <label className="cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all shadow-sm active:scale-95">
+                               {selectedProject.imageUrl ? 'Alterar Foto' : 'Anexar Foto'}
+                               <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+                             </label>
+                           )}
+                        </div>
+                        
+                        {selectedProject.imageUrl ? (
+                          <div className="relative group rounded-2xl overflow-hidden border border-slate-200 aspect-video bg-slate-50">
+                            <img 
+                              src={selectedProject.imageUrl} 
+                              alt="PPS Status" 
+                              className="w-full h-full object-contain"
+                              referrerPolicy="no-referrer"
+                            />
+                            <div className="absolute inset-0 bg-slate-900/0 group-hover:bg-slate-900/40 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100">
+                               <a href={selectedProject.imageUrl} target="_blank" rel="noopener noreferrer" className="bg-white text-slate-800 px-4 py-2 rounded-xl text-xs font-bold shadow-xl">Ver Tamanho Inteiro</a>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="h-40 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400 p-6">
+                            <Calendar className="w-8 h-8 opacity-20 mb-2" />
+                            <p className="text-[11px] font-medium text-center">Nenhuma foto anexada. Registe o estado do PPS físico para evidência.</p>
+                          </div>
+                        )}
                       </div>
 
                       {selectedProject.actualStart && (
@@ -1123,6 +1246,68 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Edit Project Dates Modal */}
+      <AnimatePresence>
+        {isEditingDates && selectedProject && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-6 sm:p-0">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsEditingDates(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl p-8 overflow-hidden"
+            >
+              <h2 className="text-xl font-black mb-6 uppercase tracking-tight text-slate-800">Alterar Prazos do PPS</h2>
+              <form onSubmit={handleUpdateDates} className="space-y-4">
+                <div className="grid grid-cols-1 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Início Planeado</label>
+                    <input 
+                      name="start" 
+                      type="date" 
+                      required 
+                      defaultValue={selectedProject.plannedStart}
+                      className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" 
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Fim Planeado</label>
+                    <input 
+                      name="end" 
+                      type="date" 
+                      required 
+                      defaultValue={selectedProject.plannedEnd}
+                      className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" 
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-4 mt-6">
+                  <button 
+                    type="button" 
+                    onClick={() => setIsEditingDates(false)}
+                    className="flex-1 px-4 py-3 font-bold text-slate-500 hover:bg-slate-50 rounded-xl transition-all uppercase tracking-widest text-sm"
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    type="submit" 
+                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-emerald-200 uppercase tracking-widest text-sm"
+                  >
+                    Guardar Datas
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Settings Modal */}
       <AnimatePresence>
         {isSettingsOpen && (
@@ -1279,6 +1464,40 @@ export default function App() {
                             )}
                           </div>
                         ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-6">
+                    <div className="pt-6 border-t border-slate-100">
+                      <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 flex items-center gap-2">
+                        <Lock className="w-3 h-3" />
+                        Segurança & Acesso
+                      </h4>
+                      <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 shadow-sm">
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase">Password do Administrador</label>
+                          <div className="flex gap-2">
+                            <input 
+                              type="password"
+                              defaultValue={ADMIN_CREDENTIALS.password}
+                              className="flex-1 border border-slate-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                              onBlur={(e) => {
+                                if (e.target.value.trim()) {
+                                  ADMIN_CREDENTIALS.password = e.target.value.trim();
+                                  localStorage.setItem('pps_admin_password', e.target.value.trim());
+                                  addLog("Password de Admin atualizada no browser.");
+                                }
+                              }}
+                            />
+                            <div className="bg-slate-50 px-3 py-2 rounded-xl border border-slate-100 text-[10px] text-slate-400 font-bold flex items-center">
+                              BROWSER ONLY
+                            </div>
+                          </div>
+                          <p className="text-[9px] text-slate-400 leading-relaxed italic">
+                            Nota: Esta alteração é persistida apenas neste browser (local). Para alterar permanentemente em todos os dispositivos, o código fonte deve ser atualizado no GitHub.
+                          </p>
+                        </div>
                       </div>
                     </div>
                   </div>
