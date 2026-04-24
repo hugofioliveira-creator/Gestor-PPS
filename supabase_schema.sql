@@ -1,6 +1,9 @@
--- 1. Create tables if they don't exist
+-- 1. Garante que as funções de UUID estão disponíveis
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- 2. Tabela de Projetos
 CREATE TABLE IF NOT EXISTS public.projects (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
     description TEXT,
     owner TEXT,
@@ -13,8 +16,9 @@ CREATE TABLE IF NOT EXISTS public.projects (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+-- 3. Tabela de Tarefas
 CREATE TABLE IF NOT EXISTS public.tasks (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id UUID REFERENCES public.projects(id) ON DELETE CASCADE,
     description TEXT NOT NULL,
     responsible TEXT,
@@ -23,31 +27,28 @@ CREATE TABLE IF NOT EXISTS public.tasks (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+-- 4. Tabela de Pivots
 CREATE TABLE IF NOT EXISTS public.pivots (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
     email TEXT,
     department TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 2. Enable Row Level Security
+-- 5. Habilitar RLS
 ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.pivots ENABLE ROW LEVEL SECURITY;
 
--- 3. Drop existing policies to avoid "already exists" errors
-DROP POLICY IF EXISTS "Allow all access" ON public.projects;
-DROP POLICY IF EXISTS "Allow all access" ON public.tasks;
-DROP POLICY IF EXISTS "Allow all access" ON public.pivots;
-DROP POLICY IF EXISTS "Allow all for now" ON public.projects;
-DROP POLICY IF EXISTS "Allow all for now" ON public.tasks;
-DROP POLICY IF EXISTS "Allow all for now" ON public.pivots;
+-- 6. Limpar e recriar políticas para evitar erros de duplicado
 DROP POLICY IF EXISTS "Acesso Total" ON public.projects;
 DROP POLICY IF EXISTS "Acesso Total" ON public.tasks;
 DROP POLICY IF EXISTS "Acesso Total" ON public.pivots;
+DROP POLICY IF EXISTS "Allow all for now" ON public.projects;
+DROP POLICY IF EXISTS "Allow all for now" ON public.tasks;
+DROP POLICY IF EXISTS "Allow all for now" ON public.pivots;
 
--- 4. Create new inclusive policies
-CREATE POLICY "Allow all access" ON public.projects FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all access" ON public.tasks FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all access" ON public.pivots FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Acesso Total" ON public.projects FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Acesso Total" ON public.tasks FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Acesso Total" ON public.pivots FOR ALL USING (true) WITH CHECK (true);
