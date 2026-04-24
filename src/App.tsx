@@ -24,11 +24,13 @@ import {
   Mail,
   Users,
   Check,
-  X
+  X,
+  Database
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PPSProject, Task, ProjectStatus, TaskStatus, UrgencyLevel, Pivot, EmailTemplate } from './types';
 import { MOCK_PROJECTS, MOCK_PIVOTS } from './mockData';
+import { supabase, hasSupabaseConfig } from './lib/supabase';
 
 // --- Utility Functions ---
 
@@ -253,15 +255,66 @@ const GanttChart = ({ projects, onSelect }: { projects: PPSProject[], onSelect: 
 };
 
 export default function App() {
-  const [projects, setProjects] = useState<PPSProject[]>(() => {
-    const saved = localStorage.getItem('pps_projects');
-    return saved ? JSON.parse(saved) : MOCK_PROJECTS;
-  });
-  
-  const [pivots, setPivots] = useState<Pivot[]>(() => {
-    const saved = localStorage.getItem('pps_pivots');
-    return saved ? JSON.parse(saved) : MOCK_PIVOTS;
-  });
+  const [projects, setProjects] = useState<PPSProject[]>([]);
+  const [pivots, setPivots] = useState<Pivot[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [supabaseConnected, setSupabaseConnected] = useState(false);
+
+  // Carregar dados iniciais (Supabase ou LocalStorage)
+  useEffect(() => {
+    async function init() {
+      if (!hasSupabaseConfig) {
+        const savedProjects = localStorage.getItem('pps_projects');
+        const savedPivots = localStorage.getItem('pps_pivots');
+        setProjects(savedProjects ? JSON.parse(savedProjects) : MOCK_PROJECTS);
+        setPivots(savedPivots ? JSON.parse(savedPivots) : MOCK_PIVOTS);
+        setLoading(false);
+        setSupabaseConnected(false);
+        return;
+      }
+
+      try {
+        const { data: projData, error: projError } = await supabase.from('projects').select('*');
+        const { data: pivData } = await supabase.from('pivots').select('*');
+        const { data: taskData } = await supabase.from('tasks').select('*');
+
+        if (projError) throw projError;
+
+        setSupabaseConnected(true);
+
+        if (projData) {
+          const formatted = projData.map(p => ({
+            ...p,
+            urgency: p.urgency as UrgencyLevel,
+            plannedStart: p.planned_start,
+            plannedEnd: p.planned_end,
+            actualStart: p.actual_start,
+            actualEnd: p.actual_end,
+            tasks: (taskData || [])
+              .filter(t => t.project_id === p.id)
+              .map(t => ({
+                id: t.id,
+                description: t.description,
+                responsible: t.responsible,
+                deadline: t.deadline,
+                status: t.status as TaskStatus
+              }))
+          }));
+          setProjects(formatted);
+        }
+        if (pivData) setPivots(pivData);
+      } catch (err) {
+        console.error("Erro Supabase:", err);
+        setSupabaseConnected(false);
+        // Fallback
+        const savedProjects = localStorage.getItem('pps_projects');
+        setProjects(savedProjects ? JSON.parse(savedProjects) : MOCK_PROJECTS);
+      } finally {
+        setLoading(false);
+      }
+    }
+    init();
+  }, []);
 
   const [emailTemplate, setEmailTemplate] = useState<EmailTemplate>(() => {
     const saved = localStorage.getItem('pps_email_template');
@@ -277,13 +330,16 @@ export default function App() {
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
+  // Sync to local and Supabase
   useEffect(() => {
+    if (loading) return;
     localStorage.setItem('pps_projects', JSON.stringify(projects));
-  }, [projects]);
+  }, [projects, loading]);
 
   useEffect(() => {
+    if (loading) return;
     localStorage.setItem('pps_pivots', JSON.stringify(pivots));
-  }, [pivots]);
+  }, [pivots, loading]);
 
   useEffect(() => {
     localStorage.setItem('pps_email_template', JSON.stringify(emailTemplate));
@@ -300,12 +356,13 @@ export default function App() {
     return { total, completed, green };
   }, [projects]);
 
-  const handleAddProject = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleAddProject = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
     const urgency = parseInt(formData.get('urgency') as string) as UrgencyLevel;
+    
     const newProject: PPSProject = {
-      id: `pps-${Date.now()}`,
+      id: hasSupabaseConfig ? undefined : `pps-${Date.now()}`,
       name: formData.get('name') as string,
       description: formData.get('description') as string,
       owner: formData.get('owner') as string,
@@ -315,53 +372,119 @@ export default function App() {
       plannedStart: formData.get('start') as string,
       plannedEnd: formData.get('end') as string,
       tasks: []
-    };
-    newProject.status = calculateStatus(newProject);
-    setProjects([...projects, newProject]);
+    } as any;
+
+    if (hasSupabaseConfig) {
+      const { data, error } = await supabase.from('projects').insert({
+        name: newProject.name,
+        description: newProject.description,
+        owner: newProject.owner,
+        urgency: newProject.urgency,
+        planned_start: newProject.plannedStart,
+        planned_end: newProject.plannedEnd,
+        progress: 0
+      }).select().single();
+      
+      if (data) {
+        newProject.id = data.id;
+        newProject.status = calculateStatus(newProject);
+        setProjects([...projects, newProject]);
+      }
+    } else {
+      (newProject as any).id = `pps-${Date.now()}`;
+      newProject.status = calculateStatus(newProject);
+      setProjects([...projects, newProject]);
+    }
+
     setIsAddingProject(false);
   };
 
-  const handleAddTask = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleAddTask = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!selectedId) return;
     
     const formData = new FormData(e.currentTarget);
-    const newTask: Task = {
-      id: `task-${Date.now()}`,
-      description: formData.get('description') as string,
-      responsible: formData.get('responsible') as string,
-      deadline: formData.get('deadline') as string,
-      status: 'por-fazer',
-    };
+    const taskDesc = formData.get('description') as string;
+    const taskResp = formData.get('responsible') as string;
+    const taskDeadline = formData.get('deadline') as string;
 
-    setProjects(projects.map(p => {
-      if (p.id === selectedId) {
-        return { ...p, tasks: [...p.tasks, newTask] };
+    const newTask: Task = {
+      id: hasSupabaseConfig ? undefined : `task-${Date.now()}`,
+      description: taskDesc,
+      responsible: taskResp,
+      deadline: taskDeadline,
+      status: 'por-fazer',
+    } as any;
+
+    if (hasSupabaseConfig) {
+      const { data, error } = await supabase.from('tasks').insert({
+        project_id: selectedId,
+        description: newTask.description,
+        responsible: newTask.responsible,
+        deadline: newTask.deadline,
+        status: 'por-fazer'
+      }).select().single();
+
+      if (data) {
+        newTask.id = data.id;
+        setProjects(projects.map(p => {
+          if (p.id === selectedId) return { ...p, tasks: [...p.tasks, newTask] };
+          return p;
+        }));
       }
-      return p;
-    }));
+    } else {
+      (newTask as any).id = `task-${Date.now()}`;
+      setProjects(projects.map(p => {
+        if (p.id === selectedId) return { ...p, tasks: [...p.tasks, newTask] };
+        return p;
+      }));
+    }
     e.currentTarget.reset();
   };
 
-  const updateTaskStatus = (taskId: string, status: TaskStatus) => {
+  const updateTaskStatus = async (taskId: string, status: TaskStatus) => {
+    if (hasSupabaseConfig) {
+      await supabase.from('tasks').update({ status }).eq('id', taskId);
+    }
+
     setProjects(projects.map(p => {
       if (p.id === selectedId) {
         const updatedTasks = p.tasks.map(t => t.id === taskId ? { ...t, status } : t);
         const completedTasks = updatedTasks.filter(t => t.status === 'concluido').length;
         const progress = updatedTasks.length > 0 ? Math.round((completedTasks / updatedTasks.length) * 100) : 0;
+        
+        // Update progress in supabase too
+        if (hasSupabaseConfig) {
+          supabase.from('projects').update({ progress }).eq('id', selectedId).then();
+        }
+
         return { ...p, tasks: updatedTasks, progress };
       }
       return p;
     }));
   };
 
-  const deleteProject = (id: string) => {
-    if (confirm('Tem a certeza que deseja eliminar este projeto?')) {
+  const deleteProject = async (id: string) => {
+    if (confirm('Tem a certeza que deseja eliminar este projecto?')) {
+      if (hasSupabaseConfig) {
+        await supabase.from('projects').delete().eq('id', id);
+      }
       setProjects(projects.filter(p => p.id !== id));
       setView('dashboard');
       setSelectedId(null);
     }
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">A ligar ao servidor...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans selection:bg-emerald-100">
@@ -376,6 +499,12 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-4">
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border ${supabaseConnected ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-slate-50 border-slate-100 text-slate-500'}`}>
+              <Database className={`w-3.5 h-3.5 ${supabaseConnected ? 'animate-pulse' : ''}`} />
+              <span className="text-[10px] font-bold uppercase tracking-tight">
+                {supabaseConnected ? 'Supabase Ligado' : 'Modo Local'}
+              </span>
+            </div>
             <button 
               onClick={() => setIsSettingsOpen(true)}
               className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-slate-50 rounded-lg transition-colors border border-slate-100"
@@ -874,16 +1003,30 @@ export default function App() {
                     <div className="bg-slate-50 rounded-2xl p-6 border border-slate-100">
                       <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Adicionar Novo Pivot</h4>
                       <form 
-                        onSubmit={(e) => {
+                        onSubmit={async (e) => {
                           e.preventDefault();
                           const formData = new FormData(e.currentTarget);
                           const newPivot: Pivot = {
-                            id: `piv-${Date.now()}`,
+                            id: hasSupabaseConfig ? undefined : `piv-${Date.now()}`,
                             name: formData.get('name') as string,
                             email: formData.get('email') as string,
                             department: formData.get('department') as string,
-                          };
-                          setPivots([...pivots, newPivot]);
+                          } as any;
+
+                          if (hasSupabaseConfig) {
+                            const { data, error } = await supabase.from('pivots').insert({
+                              name: newPivot.name,
+                              email: newPivot.email,
+                              department: newPivot.department
+                            }).select().single();
+                            if (data) {
+                              newPivot.id = data.id;
+                              setPivots([...pivots, newPivot]);
+                            }
+                          } else {
+                            (newPivot as any).id = `piv-${Date.now()}`;
+                            setPivots([...pivots, newPivot]);
+                          }
                           e.currentTarget.reset();
                         }}
                         className="grid grid-cols-1 gap-3"
@@ -907,7 +1050,12 @@ export default function App() {
                               <p className="text-[10px] text-slate-400 font-medium">{pivot.email} &bull; {pivot.department}</p>
                             </div>
                             <button 
-                              onClick={() => setPivots(pivots.filter(p => p.id !== pivot.id))}
+                              onClick={async () => {
+                                if (hasSupabaseConfig) {
+                                  await supabase.from('pivots').delete().eq('id', pivot.id);
+                                }
+                                setPivots(pivots.filter(p => p.id !== pivot.id));
+                              }}
                               className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
                             >
                               <Trash2 className="w-4 h-4" />
