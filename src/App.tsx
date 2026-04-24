@@ -375,6 +375,7 @@ export default function App() {
     } as any;
 
     if (hasSupabaseConfig) {
+      console.log("Tentando inserir no Supabase:", newProject);
       const { data, error } = await supabase.from('projects').insert({
         name: newProject.name,
         description: newProject.description,
@@ -385,6 +386,12 @@ export default function App() {
         progress: 0
       }).select().single();
       
+      if (error) {
+        console.error("Erro ao criar projeto no Supabase:", error);
+        alert(`Erro ao criar projeto: ${error.message}`);
+        return;
+      }
+
       if (data) {
         newProject.id = data.id;
         newProject.status = calculateStatus(newProject);
