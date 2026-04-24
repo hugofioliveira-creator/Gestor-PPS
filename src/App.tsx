@@ -329,6 +329,12 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [debugLog, setDebugLog] = useState<string[]>([]);
+
+  const addLog = (msg: string) => {
+    console.log(msg);
+    setDebugLog(prev => [msg, ...prev].slice(0, 5));
+  };
 
   // Sync to local and Supabase
   useEffect(() => {
@@ -358,52 +364,60 @@ export default function App() {
 
   const handleAddProject = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    const urgency = parseInt(formData.get('urgency') as string) as UrgencyLevel;
-    
-    const newProject: PPSProject = {
-      id: hasSupabaseConfig ? undefined : `pps-${Date.now()}`,
-      name: formData.get('name') as string,
-      description: formData.get('description') as string,
-      owner: formData.get('owner') as string,
-      urgency,
-      status: 'green',
-      progress: 0,
-      plannedStart: formData.get('start') as string,
-      plannedEnd: formData.get('end') as string,
-      tasks: []
-    } as any;
-
-    if (hasSupabaseConfig) {
-      console.log("Tentando inserir no Supabase:", newProject);
-      const { data, error } = await supabase.from('projects').insert({
-        name: newProject.name,
-        description: newProject.description,
-        owner: newProject.owner,
-        urgency: newProject.urgency,
-        planned_start: newProject.plannedStart,
-        planned_end: newProject.plannedEnd,
-        progress: 0
-      }).select().single();
+    try {
+      const formData = new FormData(e.currentTarget);
+      const urgency = parseInt(formData.get('urgency') as string) as UrgencyLevel;
       
-      if (error) {
-        console.error("Erro ao criar projeto no Supabase:", error);
-        alert(`Erro ao criar projeto: ${error.message}`);
-        return;
-      }
+      const newProject: PPSProject = {
+        id: hasSupabaseConfig ? undefined : `pps-${Date.now()}`,
+        name: formData.get('name') as string,
+        description: formData.get('description') as string,
+        owner: formData.get('owner') as string,
+        urgency,
+        status: 'green',
+        progress: 0,
+        plannedStart: formData.get('start') as string,
+        plannedEnd: formData.get('end') as string,
+        tasks: []
+      } as any;
 
-      if (data) {
-        newProject.id = data.id;
+      if (hasSupabaseConfig) {
+        addLog("Tentando inserir no Supabase...");
+        const { data, error } = await supabase.from('projects').insert({
+          name: newProject.name,
+          description: newProject.description,
+          owner: newProject.owner,
+          urgency: newProject.urgency,
+          planned_start: newProject.plannedStart,
+          planned_end: newProject.plannedEnd,
+          progress: 0
+        }).select().single();
+        
+        if (error) {
+          addLog(`Erro Supabase: ${error.message}`);
+          alert(`Erro no Supabase: ${error.message}. A criar localmente por agora.`);
+          // Fallback para local se o supabase falhar
+          (newProject as any).id = `pps-${Date.now()}`;
+          newProject.status = calculateStatus(newProject);
+          setProjects([...projects, newProject]);
+        } else if (data) {
+          addLog("Sucesso ao criar no Supabase!");
+          newProject.id = data.id;
+          newProject.status = calculateStatus(newProject);
+          setProjects([...projects, newProject]);
+        }
+      } else {
+        addLog("Criando projeto em modo Local.");
+        (newProject as any).id = `pps-${Date.now()}`;
         newProject.status = calculateStatus(newProject);
         setProjects([...projects, newProject]);
       }
-    } else {
-      (newProject as any).id = `pps-${Date.now()}`;
-      newProject.status = calculateStatus(newProject);
-      setProjects([...projects, newProject]);
-    }
 
-    setIsAddingProject(false);
+      setIsAddingProject(false);
+    } catch (err) {
+      addLog(`Erro Crítico: ${err instanceof Error ? err.message : String(err)}`);
+      alert("Ocorreu um erro ao processar o formulário. Verifique os logs nas Definições.");
+    }
   };
 
   const handleAddTask = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -424,6 +438,7 @@ export default function App() {
     } as any;
 
     if (hasSupabaseConfig) {
+      addLog("Adicionando tarefa no Supabase...");
       const { data, error } = await supabase.from('tasks').insert({
         project_id: selectedId,
         description: newTask.description,
@@ -432,14 +447,24 @@ export default function App() {
         status: 'por-fazer'
       }).select().single();
 
-      if (data) {
+      if (error) {
+        addLog(`Erro tarefa: ${error.message}`);
+        (newTask as any).id = `task-${Date.now()}`;
+        setProjects(projects.map(p => {
+          if (p.id === selectedId) return { ...p, tasks: [...p.tasks, newTask] };
+          return p;
+        }));
+      } else if (data) {
+        addLog("Tarefa adicionada com sucesso!");
         newTask.id = data.id;
         setProjects(projects.map(p => {
           if (p.id === selectedId) return { ...p, tasks: [...p.tasks, newTask] };
           return p;
         }));
+        (e.target as HTMLFormElement).reset();
       }
     } else {
+      addLog("Tarefa adicionada em modo Local.");
       (newTask as any).id = `task-${Date.now()}`;
       setProjects(projects.map(p => {
         if (p.id === selectedId) return { ...p, tasks: [...p.tasks, newTask] };
@@ -451,7 +476,9 @@ export default function App() {
 
   const updateTaskStatus = async (taskId: string, status: TaskStatus) => {
     if (hasSupabaseConfig) {
-      await supabase.from('tasks').update({ status }).eq('id', taskId);
+      addLog(`Atualizando status da tarefa ${taskId}...`);
+      const { error } = await supabase.from('tasks').update({ status }).eq('id', taskId);
+      if (error) addLog(`Erro ao atualizar tarefa: ${error.message}`);
     }
 
     setProjects(projects.map(p => {
@@ -474,7 +501,9 @@ export default function App() {
   const deleteProject = async (id: string) => {
     if (confirm('Tem a certeza que deseja eliminar este projecto?')) {
       if (hasSupabaseConfig) {
-        await supabase.from('projects').delete().eq('id', id);
+        addLog(`Eliminando projeto ${id}...`);
+        const { error } = await supabase.from('projects').delete().eq('id', id);
+        if (error) addLog(`Erro ao eliminar: ${error.message}`);
       }
       setProjects(projects.filter(p => p.id !== id));
       setView('dashboard');
@@ -997,6 +1026,51 @@ export default function App() {
               </div>
 
               <div className="flex-1 overflow-y-auto p-8 h-full">
+                {/* Supabase Diagnostic Panel */}
+                <section className="mb-12">
+                  <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Estado do Sistema & Base de Dados</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-slate-50 rounded-2xl p-6 border border-slate-100">
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-center text-[11px]">
+                          <span className="text-slate-500 font-medium tracking-tight">VITE_SUPABASE_URL</span>
+                          <span className={(import.meta as any).env.VITE_SUPABASE_URL ? "text-emerald-600 font-bold" : "text-rose-500 font-bold"}>
+                            {(import.meta as any).env.VITE_SUPABASE_URL ? "✓ DETETADA" : "✗ AUSENTE"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center text-[11px]">
+                          <span className="text-slate-500 font-medium tracking-tight">VITE_SUPABASE_ANON_KEY</span>
+                          <span className={(import.meta as any).env.VITE_SUPABASE_ANON_KEY ? "text-emerald-600 font-bold" : "text-rose-500 font-bold"}>
+                            {(import.meta as any).env.VITE_SUPABASE_ANON_KEY ? "✓ DETETADA" : "✗ AUSENTE"}
+                          </span>
+                        </div>
+                        <div className="pt-3 border-t border-slate-200 flex justify-between items-center text-[11px]">
+                          <span className="text-slate-500 font-medium tracking-tight">Ligação Real</span>
+                          <span className={supabaseConnected ? "text-emerald-600 font-bold" : "text-amber-500 font-bold"}>
+                            {supabaseConnected ? "ESTABELECIDA ✓" : "MODO LOCAL (OFFLINE) ⚠"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="bg-slate-900 rounded-2xl p-6 text-[10px] font-mono text-emerald-400 shadow-inner overflow-hidden">
+                      <p className="text-slate-500 mb-2 border-b border-slate-800 pb-1 uppercase italic tracking-widest">Logs de Operação:</p>
+                      <div className="space-y-1 h-[60px] overflow-y-auto">
+                        {debugLog.length > 0 ? (
+                          debugLog.map((log, i) => <div key={i} className="py-0.5">&gt; {log}</div>)
+                        ) : (
+                          <div className="text-slate-700 italic">Aguardando operações...</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  {!supabaseConnected && (import.meta as any).env.VITE_SUPABASE_URL && (
+                    <p className="mt-3 text-[10px] text-amber-600 font-medium leading-relaxed bg-amber-50 p-3 rounded-lg border border-amber-100">
+                      <strong>Nota:</strong> As variáveis foram detetadas mas a ligação falhou. Verifique se as tabelas foram criadas no Supabase usando o script SQL fornecido e se as políticas RLS permitem inserções.
+                    </p>
+                  )}
+                </section>
+
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
                   {/* Pivot Management */}
                   <div className="space-y-6">
