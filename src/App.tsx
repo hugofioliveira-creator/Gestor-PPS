@@ -328,6 +328,7 @@ export default function App() {
               actualStart: p.actual_start,
               actualEnd: p.actual_end,
               imageUrl: p.image_url,
+              isCompleted: p.is_completed || false,
               status: 'green', // Initial value
               tasks: (taskData || [])
                 .filter(t => t.project_id === p.id)
@@ -377,6 +378,7 @@ export default function App() {
   const [previewZoom, setPreviewZoom] = useState(1);
   const previewConstraintsRef = useRef<HTMLDivElement>(null);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [userRole, setUserRole] = useState<UserRole | null>(() => {
     return localStorage.getItem('pps_user_role') as UserRole | null;
@@ -409,9 +411,10 @@ export default function App() {
   [projects, selectedId]);
 
   const stats = useMemo(() => {
-    const total = projects.length;
-    const completed = projects.filter(p => p.progress === 100).length;
-    const green = projects.filter(p => p.status === 'green').length;
+    const activeProjects = projects.filter(p => !p.isCompleted);
+    const total = activeProjects.length;
+    const completed = projects.filter(p => p.isCompleted).length;
+    const green = activeProjects.filter(p => p.status === 'green').length;
     return { total, completed, green };
   }, [projects]);
 
@@ -443,7 +446,8 @@ export default function App() {
           urgency: newProject.urgency,
           planned_start: newProject.plannedStart,
           planned_end: newProject.plannedEnd,
-          progress: 0
+          progress: 0,
+          is_completed: false
         }).select().single();
         
         if (error) {
@@ -619,6 +623,40 @@ export default function App() {
       }
       return p;
     }));
+  };
+
+  const handleToggleComplete = async (id: string) => {
+    if (userRole !== 'admin') return;
+    const project = projects.find(p => p.id === id);
+    if (!project) return;
+
+    const newStatus = !project.isCompleted;
+    const confirmMsg = newStatus 
+      ? 'Tem a certeza que deseja marcar este PPS como concluído? Ele será movido para o arquivo.' 
+      : 'Tem a certeza que deseja reabrir este PPS?';
+
+    if (confirm(confirmMsg)) {
+      if (hasSupabaseConfig) {
+        addLog(`Atualizando estado de conclusão do projeto ${id}...`);
+        const { error } = await supabase.from('projects').update({
+          is_completed: newStatus
+        }).eq('id', id);
+        if (error) {
+          addLog(`Erro ao atualizar conclusão: ${error.message}`);
+          alert("Erro no Supabase ao atualizar estado.");
+          return;
+        }
+      }
+
+      setProjects(projects.map(p => 
+        p.id === id ? { ...p, isCompleted: newStatus } : p
+      ));
+      
+      if (newStatus) {
+        setView('dashboard');
+        setSelectedId(null);
+      }
+    }
   };
 
   const deleteProject = async (id: string) => {
@@ -823,11 +861,28 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-4">
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border ${supabaseConnected ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-slate-50 border-slate-100 text-slate-500'}`}>
-              <Database className={`w-3.5 h-3.5 ${supabaseConnected ? 'animate-pulse' : ''}`} />
-              <span className="text-[10px] font-bold uppercase tracking-tight">
-                {supabaseConnected ? 'Supabase Ligado' : 'Modo Local'}
-              </span>
+            <div className="flex items-center gap-3">
+              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border ${supabaseConnected ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-slate-50 border-slate-100 text-slate-500'}`}>
+                <Database className={`w-3.5 h-3.5 ${supabaseConnected ? 'animate-pulse' : ''}`} />
+                <span className="text-[10px] font-bold uppercase tracking-tight">
+                  {supabaseConnected ? 'Supabase Ligado' : 'Modo Local'}
+                </span>
+              </div>
+              
+              {/* Server Memory Bar */}
+              <div className="hidden md:flex flex-col gap-1 w-24">
+                <div className="flex justify-between items-center text-[8px] font-black uppercase tracking-wider text-slate-400">
+                  <span>Memória</span>
+                  <span>14%</span>
+                </div>
+                <div className="h-1 bg-slate-100 rounded-full overflow-hidden">
+                  <motion.div 
+                    initial={{ width: 0 }}
+                    animate={{ width: '14%' }}
+                    className="h-full bg-emerald-500 rounded-full"
+                  />
+                </div>
+              </div>
             </div>
             {userRole === 'admin' && (
               <>
@@ -873,14 +928,14 @@ export default function App() {
                 <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
                   <div className="bg-blue-50 p-3 rounded-xl"><BarChart3 className="w-6 h-6 text-blue-600" /></div>
                   <div>
-                    <p className="text-sm font-medium text-slate-500">Total Projetos</p>
+                    <p className="text-sm font-medium text-slate-500">PPS em Curso</p>
                     <p className="text-2xl font-bold">{stats.total}</p>
                   </div>
                 </div>
                 <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
                   <div className="bg-emerald-50 p-3 rounded-xl"><CheckCircle2 className="w-6 h-6 text-emerald-600" /></div>
                   <div>
-                    <p className="text-sm font-medium text-slate-500">Concluídos</p>
+                    <p className="text-sm font-medium text-slate-500">Arquivo (Concluídos)</p>
                     <p className="text-2xl font-bold">{stats.completed}</p>
                   </div>
                 </div>
@@ -917,13 +972,31 @@ export default function App() {
                      </div>
                   </div>
                 </div>
-                <GanttChart projects={projects} onSelect={(id) => { setSelectedId(id); setView('detail'); }} />
+                <GanttChart projects={projects.filter(p => !p.isCompleted)} onSelect={(id) => { setSelectedId(id); setView('detail'); }} />
               </section>
 
               {/* Project List Section */}
               <section className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-bold">Todos os PPS</h2>
+                  <div className="flex items-center gap-4">
+                    <h2 className="text-lg font-bold">{showArchived ? 'PPS Arquivos (Concluídos)' : 'Todos os PPS em Curso'}</h2>
+                    <button 
+                      onClick={() => setShowArchived(!showArchived)}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border transition-all text-[10px] font-black uppercase tracking-widest ${showArchived ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-slate-200 text-slate-400 hover:border-emerald-200 hover:text-emerald-600'}`}
+                    >
+                      {showArchived ? (
+                        <>
+                          <LayoutDashboard className="w-3.5 h-3.5" />
+                          Ver Activos
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          Ver Arquivo
+                        </>
+                      )}
+                    </button>
+                  </div>
                   <div className="relative">
                     <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                     <input 
@@ -935,7 +1008,9 @@ export default function App() {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {projects.map(project => (
+                  {projects
+                    .filter(p => !!p.isCompleted === showArchived)
+                    .map(project => (
                     <motion.div 
                       key={project.id}
                       whileHover={{ y: -4 }}
@@ -944,6 +1019,11 @@ export default function App() {
                     >
                       <div className="flex justify-between items-start mb-4">
                         <div className="flex flex-col gap-1">
+                          {project.isCompleted && (
+                            <div className="px-2 py-0.5 rounded bg-slate-900 text-white text-[9px] font-black uppercase tracking-wider w-fit">
+                              Arquivado / Concluído
+                            </div>
+                          )}
                           <div className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider w-fit ${getStatusBgColor(calculateStatus(project))} ${getStatusTextColor(calculateStatus(project))}`}>
                             {calculateStatus(project) === 'green' ? 'Em dia' : calculateStatus(project) === 'yellow' ? 'Em risco' : 'Em atraso'}
                           </div>
@@ -1030,7 +1110,14 @@ export default function App() {
                         Relembrar PIVOTs (Email)
                       </button>
                       <button 
-                        onClick={() => deleteProject(selectedId!)}
+                         onClick={() => handleToggleComplete(selectedId!)}
+                         className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs transition-colors ${selectedProject?.isCompleted ? 'bg-amber-50 text-amber-600 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'}`}
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        {selectedProject?.isCompleted ? 'Reabrir PPS' : 'Concluir PPS'}
+                      </button>
+                      <button 
+                         onClick={() => deleteProject(selectedId!)}
                         className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
                       >
                         <Trash2 className="w-5 h-5" />

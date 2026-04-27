@@ -42,5 +42,6 @@ export interface PPSProject {
   actualStart?: string; // ISO format
   actualEnd?: string;   // ISO format
   imageUrl?: string;
+  isCompleted?: boolean;
   tasks: Task[];
 }
