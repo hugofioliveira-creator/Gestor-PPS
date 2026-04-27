@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   BarChart3, 
   Calendar, 
@@ -26,7 +26,10 @@ import {
   Check,
   X,
   Database,
-  Lock
+  Lock,
+  ZoomIn,
+  ZoomOut,
+  RotateCcw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PPSProject, Task, ProjectStatus, TaskStatus, UrgencyLevel, Pivot, EmailTemplate } from './types';
@@ -312,24 +315,35 @@ export default function App() {
         setSupabaseConnected(true);
 
         if (projData) {
-          const formatted = projData.map(p => ({
-            ...p,
-            urgency: p.urgency as UrgencyLevel,
-            plannedStart: p.planned_start,
-            plannedEnd: p.planned_end,
-            actualStart: p.actual_start,
-            actualEnd: p.actual_end,
-            imageUrl: p.image_url,
-            tasks: (taskData || [])
-              .filter(t => t.project_id === p.id)
-              .map(t => ({
-                id: t.id,
-                description: t.description,
-                responsible: t.responsible,
-                deadline: t.deadline,
-                status: t.status as TaskStatus
-              }))
-          }));
+          const formatted = projData.map(p => {
+            const baseProject: PPSProject = {
+              id: p.id,
+              name: p.name,
+              description: p.description,
+              owner: p.owner,
+              urgency: p.urgency as UrgencyLevel,
+              progress: p.progress || 0,
+              plannedStart: p.planned_start,
+              plannedEnd: p.planned_end,
+              actualStart: p.actual_start,
+              actualEnd: p.actual_end,
+              imageUrl: p.image_url,
+              status: 'green', // Initial value
+              tasks: (taskData || [])
+                .filter(t => t.project_id === p.id)
+                .map(t => ({
+                  id: t.id,
+                  description: t.description,
+                  responsible: t.responsible,
+                  deadline: t.deadline,
+                  status: t.status as TaskStatus
+                }))
+            };
+            
+            // Calculate actual status based on dates/progress
+            baseProject.status = calculateStatus(baseProject);
+            return baseProject;
+          });
           setProjects(formatted);
         }
         if (pivData) setPivots(pivData);
@@ -359,6 +373,10 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [isEditingDates, setIsEditingDates] = useState(false);
+  const [isPreviewingImage, setIsPreviewingImage] = useState(false);
+  const [previewZoom, setPreviewZoom] = useState(1);
+  const previewConstraintsRef = useRef<HTMLDivElement>(null);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [userRole, setUserRole] = useState<UserRole | null>(() => {
     return localStorage.getItem('pps_user_role') as UserRole | null;
@@ -457,7 +475,7 @@ export default function App() {
 
   const handleAddTask = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!selectedId) return;
+    if (!selectedId || userRole !== 'admin') return;
     
     const formData = new FormData(e.currentTarget);
     const taskDesc = formData.get('description') as string;
@@ -533,6 +551,76 @@ export default function App() {
     }));
   };
 
+  const handleUpdateTask = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!selectedId || !editingTask || userRole !== 'admin') return;
+
+    const formData = new FormData(e.currentTarget);
+    const updatedTask: Task = {
+      ...editingTask,
+      description: formData.get('description') as string,
+      responsible: formData.get('responsible') as string,
+      deadline: formData.get('deadline') as string,
+    };
+
+    if (hasSupabaseConfig) {
+      addLog(`Atualizando tarefa ${editingTask.id} no Supabase...`);
+      const { error } = await supabase.from('tasks').update({
+        description: updatedTask.description,
+        responsible: updatedTask.responsible,
+        deadline: updatedTask.deadline
+      }).eq('id', editingTask.id);
+      
+      if (error) {
+        addLog(`Erro ao atualizar tarefa: ${error.message}`);
+        alert("Erro ao atualizar tarefa no Supabase.");
+        return;
+      }
+    }
+
+    setProjects(projects.map(p => {
+      if (p.id === selectedId) {
+        return {
+          ...p,
+          tasks: p.tasks.map(t => t.id === editingTask.id ? updatedTask : t)
+        };
+      }
+      return p;
+    }));
+
+    setEditingTask(null);
+  };
+
+  const handleDeleteTask = async (taskId: string) => {
+    if (!selectedId || userRole !== 'admin') return;
+    if (!confirm('Tem a certeza que deseja eliminar esta acção?')) return;
+
+    if (hasSupabaseConfig) {
+      addLog(`Eliminando tarefa ${taskId} no Supabase...`);
+      const { error } = await supabase.from('tasks').delete().eq('id', taskId);
+      if (error) {
+        addLog(`Erro ao eliminar tarefa: ${error.message}`);
+        alert("Erro ao eliminar tarefa no Supabase.");
+        return;
+      }
+    }
+
+    setProjects(projects.map(p => {
+      if (p.id === selectedId) {
+        const updatedTasks = p.tasks.filter(t => t.id !== taskId);
+        const completedTasks = updatedTasks.filter(t => t.status === 'concluido').length;
+        const progress = updatedTasks.length > 0 ? Math.round((completedTasks / updatedTasks.length) * 100) : 0;
+        
+        if (hasSupabaseConfig) {
+          supabase.from('projects').update({ progress }).eq('id', selectedId).then();
+        }
+
+        return { ...p, tasks: updatedTasks, progress };
+      }
+      return p;
+    }));
+  };
+
   const deleteProject = async (id: string) => {
     if (userRole !== 'admin') return;
     if (confirm('Tem a certeza que deseja eliminar este projecto?')) {
@@ -581,7 +669,14 @@ export default function App() {
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !selectedId) return;
+    if (!file || !selectedId || userRole !== 'admin') return;
+
+    // Check file size (max 5MB)
+    const MAX_FILE_SIZE = 5 * 1024 * 1024;
+    if (file.size > MAX_FILE_SIZE) {
+      alert("O ficheiro é demasiado grande. O limite máximo permitido para upload é de 5MB.");
+      return;
+    }
 
     const reader = new FileReader();
     reader.onloadend = async () => {
@@ -1009,7 +1104,12 @@ export default function App() {
                               referrerPolicy="no-referrer"
                             />
                             <div className="absolute inset-0 bg-slate-900/0 group-hover:bg-slate-900/40 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100">
-                               <a href={selectedProject.imageUrl} target="_blank" rel="noopener noreferrer" className="bg-white text-slate-800 px-4 py-2 rounded-xl text-xs font-bold shadow-xl">Ver Tamanho Inteiro</a>
+                               <button 
+                                 onClick={() => setIsPreviewingImage(true)}
+                                 className="bg-white text-slate-800 px-4 py-2 rounded-xl text-xs font-bold shadow-xl active:scale-95 transition-transform"
+                               >
+                                 Ver Tamanho Inteiro
+                               </button>
                             </div>
                           </div>
                         ) : (
@@ -1070,15 +1170,35 @@ export default function App() {
                                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{formatDate(task.deadline)}</span>
                                 </div>
                               </div>
-                              <select 
-                                value={task.status}
-                                onChange={(e) => updateTaskStatus(task.id, e.target.value as TaskStatus)}
-                                className="text-[10px] font-black uppercase tracking-widest outline-none bg-slate-50 border-none p-1 rounded font-bold cursor-pointer transition-colors hover:bg-slate-100"
-                              >
-                                <option value="por-fazer">Por fazer</option>
-                                <option value="em-curso">Em curso</option>
-                                <option value="concluido">Concluído</option>
-                              </select>
+                              <div className="flex items-center gap-2">
+                                <select 
+                                  value={task.status}
+                                  onChange={(e) => updateTaskStatus(task.id, e.target.value as TaskStatus)}
+                                  className="text-[10px] font-black uppercase tracking-widest outline-none bg-slate-50 border-none p-1 rounded font-bold cursor-pointer transition-colors hover:bg-slate-100"
+                                >
+                                  <option value="por-fazer">Por fazer</option>
+                                  <option value="em-curso">Em curso</option>
+                                  <option value="concluido">Concluído</option>
+                                </select>
+                                {userRole === 'admin' && (
+                                  <div className="flex gap-1 border-l border-slate-100 ml-2 pl-2">
+                                    <button 
+                                      onClick={() => setEditingTask(task)}
+                                      className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
+                                      title="Editar Acção"
+                                    >
+                                      <Edit2 className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button 
+                                      onClick={() => handleDeleteTask(task.id)}
+                                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                                      title="Eliminar Acção"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           ))
                         )}
@@ -1304,6 +1424,176 @@ export default function App() {
                 </div>
               </form>
             </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Edit Task Modal */}
+      <AnimatePresence>
+        {editingTask && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-6 sm:p-0">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setEditingTask(null)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl p-8 overflow-hidden"
+            >
+              <h2 className="text-xl font-black mb-6 uppercase tracking-tight text-slate-800">Editar Acção</h2>
+              <form onSubmit={handleUpdateTask} className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Descrição da Tarefa</label>
+                  <textarea 
+                    name="description" 
+                    required 
+                    defaultValue={editingTask.description}
+                    className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 min-h-[100px]" 
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Responsável (Pivot)</label>
+                  <select 
+                    name="responsible" 
+                    required 
+                    defaultValue={editingTask.responsible}
+                    className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                  >
+                    {pivots.map(p => (
+                      <option key={p.id} value={p.id}>{p.name} ({p.department})</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Prazo</label>
+                  <input 
+                    name="deadline" 
+                    type="date" 
+                    required 
+                    defaultValue={editingTask.deadline}
+                    className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" 
+                  />
+                </div>
+                <div className="flex gap-4 mt-6">
+                  <button 
+                    type="button" 
+                    onClick={() => setEditingTask(null)}
+                    className="flex-1 px-4 py-3 font-bold text-slate-500 hover:bg-slate-50 rounded-xl transition-all uppercase tracking-widest text-sm"
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    type="submit" 
+                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-emerald-200 uppercase tracking-widest text-sm"
+                  >
+                    Guardar Alterações
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Fullscreen Image Preview */}
+      <AnimatePresence>
+        {isPreviewingImage && selectedProject?.imageUrl && (
+          <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                setIsPreviewingImage(false);
+                setPreviewZoom(1);
+              }}
+              className="absolute inset-0 bg-slate-900/95 backdrop-blur-md cursor-zoom-out"
+            />
+            
+            {/* Header Controls */}
+            <div className="absolute top-6 left-6 right-6 flex items-center justify-between z-[110]">
+              <div className="flex items-center gap-4 bg-black/40 backdrop-blur-md px-4 py-2 rounded-2xl border border-white/10 shadow-2xl">
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPreviewZoom(prev => Math.max(1, prev - 0.5));
+                  }}
+                  className="p-2 text-white/70 hover:text-white transition-colors"
+                  title="Diminuir Zoom"
+                >
+                  <ZoomOut className="w-5 h-5" />
+                </button>
+                <div className="w-px h-4 bg-white/20 mx-1" />
+                <span className="text-white text-[10px] font-black uppercase tracking-widest w-12 text-center select-none">
+                  {Math.round(previewZoom * 100)}%
+                </span>
+                <div className="w-px h-4 bg-white/20 mx-1" />
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPreviewZoom(prev => Math.min(8, prev + 0.5));
+                  }}
+                  className="p-2 text-white/70 hover:text-white transition-colors"
+                  title="Aumentar Zoom"
+                >
+                  <ZoomIn className="w-5 h-5" />
+                </button>
+                <div className="w-px h-4 bg-white/20 mx-1" />
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPreviewZoom(1);
+                  }}
+                  className="p-2 text-white/70 hover:text-white transition-colors"
+                  title="Resetar Zoom"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                </button>
+              </div>
+
+              <button 
+                onClick={() => {
+                  setIsPreviewingImage(false);
+                  setPreviewZoom(1);
+                }}
+                className="p-3 text-white/60 hover:text-white transition-colors bg-white/10 hover:bg-white/20 rounded-full backdrop-blur-md border border-white/10"
+                title="Fechar"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Image Stage */}
+            <div ref={previewConstraintsRef} className="relative w-full h-full overflow-hidden flex items-center justify-center p-12">
+              <motion.div 
+                drag={previewZoom > 1}
+                dragConstraints={previewConstraintsRef}
+                dragElastic={0.05}
+                dragMomentum={false}
+                animate={{ scale: previewZoom }}
+                initial={{ scale: 1 }}
+                transition={{ type: 'spring', damping: 30, stiffness: 300, mass: 0.8 }}
+                className="relative cursor-grab active:cursor-grabbing touch-none"
+                whileTap={{ cursor: 'grabbing' }}
+              >
+                <img 
+                  src={selectedProject?.imageUrl} 
+                  alt="PPS Preview" 
+                  className="max-w-[85vw] max-h-[75vh] object-contain rounded-xl shadow-[0_0_50px_rgba(0,0,0,0.5)] select-none pointer-events-none"
+                  referrerPolicy="no-referrer"
+                  onMouseDown={(e) => e.preventDefault()}
+                />
+              </motion.div>
+            </div>
+
+            <div className="absolute bottom-10 left-1/2 -translate-x-1/2 text-white/60 text-[10px] font-black uppercase tracking-widest bg-black/20 backdrop-blur-sm px-4 py-1.5 rounded-full whitespace-nowrap z-[110] border border-white/5">
+              {selectedProject?.name} &bull; {previewZoom > 1 ? 'Arraste para navegar' : 'Use + para aproximar'}
+            </div>
           </div>
         )}
       </AnimatePresence>
