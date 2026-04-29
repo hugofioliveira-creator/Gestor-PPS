@@ -29,7 +29,8 @@ import {
   Lock,
   ZoomIn,
   ZoomOut,
-  RotateCcw
+  RotateCcw,
+  Download
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PPSProject, Task, ProjectStatus, TaskStatus, UrgencyLevel, Pivot, EmailTemplate } from './types';
@@ -376,6 +377,7 @@ export default function App() {
   const [isEditingDates, setIsEditingDates] = useState(false);
   const [isPreviewingImage, setIsPreviewingImage] = useState(false);
   const [previewZoom, setPreviewZoom] = useState(1);
+  const [previewPosition, setPreviewPosition] = useState({ x: 0, y: 0 });
   const previewConstraintsRef = useRef<HTMLDivElement>(null);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [showArchived, setShowArchived] = useState(false);
@@ -389,6 +391,49 @@ export default function App() {
   const addLog = (msg: string) => {
     console.log(msg);
     setDebugLog(prev => [msg, ...prev].slice(0, 5));
+  };
+
+  // Handle Keyboard and Wheel for Image Preview
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!isPreviewingImage) return;
+      if (e.key === 'Escape') {
+        setIsPreviewingImage(false);
+        setPreviewZoom(1);
+        setPreviewPosition({ x: 0, y: 0 });
+      }
+    };
+
+    const handleWheel = (e: WheelEvent) => {
+      if (!isPreviewingImage) return;
+      e.preventDefault();
+      const delta = e.deltaY * -0.01;
+      setPreviewZoom(prev => {
+        const next = Math.min(Math.max(1, prev + delta), 15);
+        return next;
+      });
+    };
+
+    if (isPreviewingImage) {
+      window.addEventListener('keydown', handleKeyDown);
+      window.addEventListener('wheel', handleWheel, { passive: false });
+    }
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('wheel', handleWheel);
+    };
+  }, [isPreviewingImage]);
+
+  const handleZoom = (type: 'in' | 'out' | 'reset') => {
+    if (type === 'reset') {
+      setPreviewZoom(1);
+      setPreviewPosition({ x: 0, y: 0 });
+    } else if (type === 'in') {
+      setPreviewZoom(prev => Math.min(15, prev + 1));
+    } else {
+      setPreviewZoom(prev => Math.max(1, prev - 1));
+    }
   };
 
   // Sync to local and Supabase
@@ -1590,7 +1635,7 @@ export default function App() {
       {/* Fullscreen Image Preview */}
       <AnimatePresence>
         {isPreviewingImage && selectedProject?.imageUrl && (
-          <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center p-4">
+          <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center p-0">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -1598,88 +1643,109 @@ export default function App() {
               onClick={() => {
                 setIsPreviewingImage(false);
                 setPreviewZoom(1);
+                setPreviewPosition({ x: 0, y: 0 });
               }}
-              className="absolute inset-0 bg-slate-900/95 backdrop-blur-md cursor-zoom-out"
+              className="absolute inset-0 bg-slate-900/98 backdrop-blur-xl cursor-zoom-out"
             />
             
             {/* Header Controls */}
-            <div className="absolute top-6 left-6 right-6 flex items-center justify-between z-[110]">
-              <div className="flex items-center gap-4 bg-black/40 backdrop-blur-md px-4 py-2 rounded-2xl border border-white/10 shadow-2xl">
+            <div className="absolute top-8 left-1/2 -translate-x-1/2 flex items-center gap-6 z-[110]">
+              <div className="flex items-center gap-4 bg-black/60 backdrop-blur-2xl px-6 py-3 rounded-full border border-white/10 shadow-3xl">
                 <button 
                   onClick={(e) => {
                     e.stopPropagation();
-                    setPreviewZoom(prev => Math.max(1, prev - 0.5));
+                    handleZoom('out');
                   }}
-                  className="p-2 text-white/70 hover:text-white transition-colors"
+                  className="p-2 text-white/50 hover:text-white transition-all hover:scale-110 active:scale-95"
                   title="Diminuir Zoom"
                 >
-                  <ZoomOut className="w-5 h-5" />
+                  <ZoomOut className="w-6 h-6" />
                 </button>
-                <div className="w-px h-4 bg-white/20 mx-1" />
-                <span className="text-white text-[10px] font-black uppercase tracking-widest w-12 text-center select-none">
+                <div className="w-px h-6 bg-white/10 mx-2" />
+                <span className="text-white text-[11px] font-black uppercase tracking-[0.2em] w-16 text-center select-none opacity-80">
                   {Math.round(previewZoom * 100)}%
                 </span>
-                <div className="w-px h-4 bg-white/20 mx-1" />
+                <div className="w-px h-6 bg-white/10 mx-2" />
                 <button 
                   onClick={(e) => {
                     e.stopPropagation();
-                    setPreviewZoom(prev => Math.min(8, prev + 0.5));
+                    handleZoom('in');
                   }}
-                  className="p-2 text-white/70 hover:text-white transition-colors"
+                  className="p-2 text-white/50 hover:text-white transition-all hover:scale-110 active:scale-95"
                   title="Aumentar Zoom"
                 >
-                  <ZoomIn className="w-5 h-5" />
+                  <ZoomIn className="w-6 h-6" />
                 </button>
-                <div className="w-px h-4 bg-white/20 mx-1" />
+                <div className="w-px h-6 bg-white/10 mx-2" />
                 <button 
                   onClick={(e) => {
                     e.stopPropagation();
-                    setPreviewZoom(1);
+                    handleZoom('reset');
                   }}
-                  className="p-2 text-white/70 hover:text-white transition-colors"
-                  title="Resetar Zoom"
+                  className="p-2 text-white/50 hover:text-white transition-all hover:rotate-180 duration-500"
+                  title="Resetar Zoom e Posição"
                 >
-                  <RotateCcw className="w-4 h-4" />
+                  <RotateCcw className="w-5 h-5" />
                 </button>
+                <div className="w-px h-6 bg-white/10 mx-2" />
+                <a 
+                  href={selectedProject.imageUrl}
+                  download={`PPS_${selectedProject.name}.png`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="p-2 text-white/50 hover:text-emerald-400 transition-all"
+                  title="Descarregar Imagem"
+                >
+                   <Download className="w-5 h-5" />
+                </a>
               </div>
 
               <button 
                 onClick={() => {
                   setIsPreviewingImage(false);
                   setPreviewZoom(1);
+                  setPreviewPosition({ x: 0, y: 0 });
                 }}
-                className="p-3 text-white/60 hover:text-white transition-colors bg-white/10 hover:bg-white/20 rounded-full backdrop-blur-md border border-white/10"
+                className="p-3 text-white/40 hover:text-white transition-all bg-white/5 hover:bg-white/10 rounded-full backdrop-blur-xl border border-white/5 group"
                 title="Fechar"
               >
-                <X className="w-6 h-6" />
+                <X className="w-7 h-7 group-hover:rotate-90 transition-transform duration-300" />
               </button>
             </div>
 
+            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-[110] text-white/30 text-[9px] font-black uppercase tracking-widest hidden md:block">
+              Use a roda do rato para zoom • Arraste para mover
+            </div>
+
             {/* Image Stage */}
-            <div ref={previewConstraintsRef} className="relative w-full h-full overflow-hidden flex items-center justify-center p-12">
+            <div 
+              ref={previewConstraintsRef} 
+              className="relative w-full h-full overflow-hidden flex items-center justify-center p-0 md:p-12"
+            >
               <motion.div 
+                style={{ 
+                  x: previewPosition.x, 
+                  y: previewPosition.y,
+                  scale: previewZoom,
+                }}
                 drag={previewZoom > 1}
-                dragConstraints={previewConstraintsRef}
-                dragElastic={0.05}
-                dragMomentum={false}
-                animate={{ scale: previewZoom }}
-                initial={{ scale: 1 }}
-                transition={{ type: 'spring', damping: 30, stiffness: 300, mass: 0.8 }}
-                className="relative cursor-grab active:cursor-grabbing touch-none"
-                whileTap={{ cursor: 'grabbing' }}
+                dragMomentum={true}
+                dragElastic={0.1}
+                onDragEnd={(_, info) => {
+                  setPreviewPosition({
+                    x: previewPosition.x + info.delta.x,
+                    y: previewPosition.y + info.delta.y
+                  });
+                }}
+                className="relative flex items-center justify-center min-w-full min-h-full"
               >
                 <img 
                   src={selectedProject?.imageUrl} 
                   alt="PPS Preview" 
-                  className="max-w-[85vw] max-h-[75vh] object-contain rounded-xl shadow-[0_0_50px_rgba(0,0,0,0.5)] select-none pointer-events-none"
+                  className="max-w-[95vw] max-h-[95vh] w-auto h-auto object-contain rounded-sm shadow-[0_0_100px_rgba(0,0,0,0.8)] select-none cursor-grab active:cursor-grabbing"
                   referrerPolicy="no-referrer"
-                  onMouseDown={(e) => e.preventDefault()}
+                  draggable={false}
                 />
               </motion.div>
-            </div>
-
-            <div className="absolute bottom-10 left-1/2 -translate-x-1/2 text-white/60 text-[10px] font-black uppercase tracking-widest bg-black/20 backdrop-blur-sm px-4 py-1.5 rounded-full whitespace-nowrap z-[110] border border-white/5">
-              {selectedProject?.name} &bull; {previewZoom > 1 ? 'Arraste para navegar' : 'Use + para aproximar'}
             </div>
           </div>
         )}

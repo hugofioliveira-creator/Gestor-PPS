@@ -15,7 +15,7 @@ const isConfigured = !!(supabaseUrl &&
                    supabaseAnonKey !== 'your-anon-key');
 
 if (!isConfigured) {
-  console.warn('Supabase não configurado ou URL inválido. Defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no Vercel.');
+  // Supabase not configured - falling back to local mode
 }
 
 export const supabase = createClient(
