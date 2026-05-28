@@ -1,6 +1,8 @@
-{
-  "name": "Gestor de PPS",
-  "description": "Sistema de gestão de projetos de melhoria contínua (PPS) com vista Gantt e gestão de tarefas.",
-  "requestFramePermissions": [],
-  "majorCapabilities": []
-}
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example

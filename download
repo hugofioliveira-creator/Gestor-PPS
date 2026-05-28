@@ -3,24 +3,45 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { createClient } from '@supabase/supabase-js';
+export type ProjectStatus = 'green' | 'yellow' | 'red';
+export type TaskStatus = 'por-fazer' | 'em-curso' | 'concluido';
 
-const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL;
-const supabaseAnonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY;
-
-const isConfigured = !!(supabaseUrl && 
-                   supabaseAnonKey && 
-                   supabaseUrl.startsWith('http') &&
-                   !supabaseUrl.includes('your-project-id') &&
-                   supabaseAnonKey !== 'your-anon-key');
-
-if (!isConfigured) {
-  console.warn('Supabase não configurado ou URL inválido. Defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no Vercel.');
+export interface Task {
+  id: string;
+  description: string;
+  responsible: string; // This will now store the Pivot ID
+  deadline: string; // ISO format
+  status: TaskStatus;
 }
 
-export const supabase = createClient(
-  isConfigured ? supabaseUrl : 'https://placeholder.supabase.co',
-  isConfigured ? supabaseAnonKey : 'placeholder'
-);
+export interface Pivot {
+  id: string;
+  name: string;
+  email: string;
+  department: string;
+}
 
-export const hasSupabaseConfig = isConfigured;
+export interface EmailTemplate {
+  subject: string;
+  bodyBefore: string;
+  bodyAfter: string;
+}
+
+export type UrgencyLevel = 1 | 2 | 3 | 4;
+
+export interface PPSProject {
+  id: string;
+  name: string;
+  description: string;
+  owner: string;
+  status: ProjectStatus;
+  urgency: UrgencyLevel;
+  progress: number;
+  plannedStart: string; // ISO format
+  plannedEnd: string;   // ISO format
+  actualStart?: string; // ISO format
+  actualEnd?: string;   // ISO format
+  imageUrl?: string;
+  isCompleted?: boolean;
+  tasks: Task[];
+}
