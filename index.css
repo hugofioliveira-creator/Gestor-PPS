@@ -750,6 +750,53 @@ export default function App() {
     setIsEditingDates(false);
   };
 
+  const compressImage = (base64Str: string): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        // Limit maximum size to 4000px on the longest side to keep outstanding quality
+        const maxDim = 4000;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(base64Str);
+          return;
+        }
+
+        // Draw white background
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // Convert to high-quality JPEG (0.92 maintains incredible pixel clarity while greatly optimizing the payload weight)
+        const compressed = canvas.toDataURL('image/jpeg', 0.92);
+        resolve(compressed);
+      };
+
+      img.onerror = () => {
+        resolve(base64Str);
+      };
+
+      img.src = base64Str;
+    });
+  };
+
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !selectedId || userRole !== 'admin') return;
@@ -761,28 +808,37 @@ export default function App() {
       return;
     }
 
+    addLog("A preparar imagem...");
     const reader = new FileReader();
     reader.onloadend = async () => {
-      const base64String = reader.result as string;
+      const originalBase64 = reader.result as string;
       
-      if (hasSupabaseConfig) {
-        addLog("Enviando foto ao Supabase...");
-        const { error } = await supabase.from('projects').update({
-          image_url: base64String
-        }).eq('id', selectedId);
+      try {
+        addLog("A otimizar imagem (mantendo alta qualidade)...");
+        const optimizedBase64 = await compressImage(originalBase64);
+        
+        if (hasSupabaseConfig) {
+          addLog("A enviar imagem para o Supabase...");
+          const { error } = await supabase.from('projects').update({
+            image_url: optimizedBase64
+          }).eq('id', selectedId);
 
-        if (error) {
-          addLog(`Erro ao salvar foto: ${error.message}`);
-          alert("Erro ao salvar foto no banco de dados.");
-          return;
+          if (error) {
+            addLog(`Erro ao salvar foto: ${error.message}`);
+            alert(`Erro ao salvar foto no banco de dados: ${error.message}`);
+            return;
+          }
         }
-      }
 
-      setProjects(projects.map(p => {
-        if (p.id === selectedId) return { ...p, imageUrl: base64String };
-        return p;
-      }));
-      addLog("Foto do PPS anexada com sucesso!");
+        setProjects(projects.map(p => {
+          if (p.id === selectedId) return { ...p, imageUrl: optimizedBase64 };
+          return p;
+        }));
+        addLog("Foto do PPS anexada e otimizada com sucesso!");
+      } catch (err: any) {
+        addLog(`Erro ao processar imagem: ${err.message || err}`);
+        alert("Ocorreu um erro ao processar a imagem.");
+      }
     };
     reader.readAsDataURL(file);
   };
