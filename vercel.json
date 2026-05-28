@@ -56,3 +56,12 @@ DROP POLICY IF EXISTS "Allow all for now" ON public.pivots;
 CREATE POLICY "Acesso Total" ON public.projects FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Acesso Total" ON public.tasks FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Acesso Total" ON public.pivots FOR ALL USING (true) WITH CHECK (true);
+
+{
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/"
+    }
+  ]
+}
